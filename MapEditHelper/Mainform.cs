@@ -189,26 +189,18 @@ namespace MapEditHelper
         private void LoadMapFile(string fileName)
         {
             byte[] bytes = File.ReadAllBytes(fileName);
-            bool preferBinary = IsBinaryMapExtension(fileName);
-            string text = DecodeMapBytes(bytes, preferBinary);
+            string text = DecodeMapBytes(bytes);
             richTextBox1.Text = text;
         }
 
-        private bool IsBinaryMapExtension(string fileName)
-        {
-            string extension = Path.GetExtension(fileName);
-            return extension.Equals(".map", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".bin", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private string DecodeMapBytes(byte[] bytes, bool preferBinary)
+        private string DecodeMapBytes(byte[] bytes)
         {
             if (bytes.Length == 0)
             {
                 return string.Empty;
             }
 
-            if (!preferBinary && LooksLikeTextMap(bytes, out string text))
+            if (TryDecodeTextMap(bytes, out string text))
             {
                 return text;
             }
@@ -216,25 +208,61 @@ namespace MapEditHelper
             return FormatRows(bytes.Select(b => b.ToString("X2")));
         }
 
-        private bool LooksLikeTextMap(byte[] bytes, out string text)
+        private bool TryDecodeTextMap(byte[] bytes, out string text)
         {
             text = string.Empty;
 
-            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-            {
-                text = System.Text.Encoding.UTF8.GetString(bytes);
-                return true;
-            }
-
-            bool hasTextControlCharacters = bytes.Any(b => b < 0x20 && b != (byte)'\r' && b != (byte)'\n' && b != (byte)'\t');
-            if (hasTextControlCharacters)
+            if (!LooksLikeText(bytes))
             {
                 return false;
             }
 
-            text = System.Text.Encoding.UTF8.GetString(bytes);
-            return Regex.IsMatch(text, @"\brow\s*\{", RegexOptions.IgnoreCase)
-                || Regex.IsMatch(text, @"(?:0x|0X)[0-9a-fA-F]{1,2}");
+            string decodedText = System.Text.Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+            if (Regex.IsMatch(decodedText, @"\brow\s*\{", RegexOptions.IgnoreCase))
+            {
+                text = decodedText;
+                return true;
+            }
+
+            string[] prefixedHexValues = Regex.Matches(decodedText, @"(?<![0-9A-Fa-f])(?:0x|0X|\$)([0-9A-Fa-f]{1,2})(?![0-9A-Fa-f])")
+                .Cast<Match>()
+                .Select(m => m.Groups[1].Value.ToUpper().PadLeft(2, '0'))
+                .ToArray();
+            if (prefixedHexValues.Length > 0)
+            {
+                text = FormatRows(prefixedHexValues);
+                return true;
+            }
+
+            string[] plainHexValues = Regex.Matches(decodedText, @"(?<![0-9A-Fa-f])([0-9A-Fa-f]{2})(?![0-9A-Fa-f])")
+                .Cast<Match>()
+                .Select(m => m.Groups[1].Value.ToUpper())
+                .ToArray();
+
+            if (plainHexValues.Length == 0)
+            {
+                return false;
+            }
+
+            string textWithoutHexValues = Regex.Replace(decodedText, @"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}(?![0-9A-Fa-f])", string.Empty);
+            bool hasOnlyHexSeparators = textWithoutHexValues.All(c => char.IsWhiteSpace(c) || c == ',' || c == ';' || c == '{' || c == '}');
+            if (!hasOnlyHexSeparators)
+            {
+                return false;
+            }
+
+            text = FormatRows(plainHexValues);
+            return true;
+        }
+
+        private bool LooksLikeText(byte[] bytes)
+        {
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            {
+                return true;
+            }
+
+            return bytes.All(b => b >= 0x20 || b == (byte)'\r' || b == (byte)'\n' || b == (byte)'\t');
         }
 
         private string FormatRows(IEnumerable<string> hexValues)

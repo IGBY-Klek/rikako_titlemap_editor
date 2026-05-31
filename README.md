@@ -39,7 +39,7 @@ Row { 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x
 - `MapEditHelper/rikako.ico` – application icon
 
 ## Binary map round-trip
-- **Load Map** accepts both text maps and encoded binary maps. Text maps are kept as-is, while binary maps are decoded into `Row { 0x.. }` lines using 24 tiles per row.
+- **Load Map** accepts `Row { ... }` text maps, plain hex dumps/C-style byte arrays (`40 0B ...`, `0x40, 0x0B, ...`, or `$40 $0B ...`), and binary maps. Text row maps are kept as-is, while hex dumps and binary maps are decoded into `Row { 0x.. }` lines using 24 tiles per row.
 - **Save Encoded Map** encodes every parsed tile code into one byte, preserving row order from top to bottom and left to right.
 - Binary round-tripping is intended for the same one-byte tile-code format used by the editor preview (`0xRC`, where `R` is the tile-sheet row and `C` is the tile-sheet column).
 
