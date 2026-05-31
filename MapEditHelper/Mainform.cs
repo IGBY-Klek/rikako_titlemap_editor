@@ -177,13 +177,107 @@ namespace MapEditHelper
         {
             using (OpenFileDialog ofd = new OpenFileDialog())
             {
-                ofd.Filter = "Text Files|*.txt";
+                ofd.Filter = "Map Files|*.txt;*.map;*.bin|Text Files|*.txt|Binary Map Files|*.map;*.bin|All Files|*.*";
                 if (ofd.ShowDialog() == DialogResult.OK)
                 {
-                    richTextBox1.Text = File.ReadAllText(ofd.FileName);
+                    LoadMapFile(ofd.FileName);
                     GenerateFromText(showWarnings: true);
                 }
             }
+        }
+
+        private void LoadMapFile(string fileName)
+        {
+            byte[] bytes = File.ReadAllBytes(fileName);
+            bool preferBinary = IsBinaryMapExtension(fileName);
+            string text = DecodeMapBytes(bytes, preferBinary);
+            richTextBox1.Text = text;
+        }
+
+        private bool IsBinaryMapExtension(string fileName)
+        {
+            string extension = Path.GetExtension(fileName);
+            return extension.Equals(".map", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".bin", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string DecodeMapBytes(byte[] bytes, bool preferBinary)
+        {
+            if (bytes.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            if (!preferBinary && LooksLikeTextMap(bytes, out string text))
+            {
+                return text;
+            }
+
+            return FormatRows(bytes.Select(b => b.ToString("X2")));
+        }
+
+        private bool LooksLikeTextMap(byte[] bytes, out string text)
+        {
+            text = string.Empty;
+
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            {
+                text = System.Text.Encoding.UTF8.GetString(bytes);
+                return true;
+            }
+
+            bool hasTextControlCharacters = bytes.Any(b => b < 0x20 && b != (byte)'\r' && b != (byte)'\n' && b != (byte)'\t');
+            if (hasTextControlCharacters)
+            {
+                return false;
+            }
+
+            text = System.Text.Encoding.UTF8.GetString(bytes);
+            return Regex.IsMatch(text, @"\brow\s*\{", RegexOptions.IgnoreCase)
+                || Regex.IsMatch(text, @"(?:0x|0X)[0-9a-fA-F]{1,2}");
+        }
+
+        private string FormatRows(IEnumerable<string> hexValues)
+        {
+            List<string> values = hexValues.ToList();
+            List<string> rows = new List<string>();
+
+            for (int i = 0; i < values.Count; i += TILES_PER_ROW)
+            {
+                rows.Add($"Row {{ {string.Join(", ", values.Skip(i).Take(TILES_PER_ROW).Select(v => $"0x{v}"))} }}");
+            }
+
+            return string.Join(Environment.NewLine, rows);
+        }
+
+        private void SaveEncodedMap_Click(object? sender, EventArgs e)
+        {
+            byte[] mapBytes = EncodeMapText(richTextBox1.Text);
+            if (mapBytes.Length == 0)
+            {
+                MessageBox.Show("No tile codes found to save. Expected values like '0x00' in 'Row { ... }' lines.", "No map data", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Filter = "Binary Map Files|*.map;*.bin|All Files|*.*";
+                sfd.DefaultExt = "map";
+                sfd.FileName = "map.map";
+
+                if (sfd.ShowDialog() == DialogResult.OK)
+                {
+                    File.WriteAllBytes(sfd.FileName, mapBytes);
+                }
+            }
+        }
+
+        private byte[] EncodeMapText(string input)
+        {
+            return ParseInput(input)
+                .SelectMany(row => row)
+                .Select(hex => Convert.ToByte(hex, 16))
+                .ToArray();
         }
 
         private void pictureBox2_Click(object sender, EventArgs e)
@@ -200,6 +294,11 @@ namespace MapEditHelper
         private void LoadMap_Click(object? sender, EventArgs e)
         {
             Button3_Click(sender, e); // Reuse existing functionality
+        }
+
+        private void SaveMap_Click(object? sender, EventArgs e)
+        {
+            SaveEncodedMap_Click(sender, e);
         }
 
         private void Exit_Click(object? sender, EventArgs e)

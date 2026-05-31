@@ -15,8 +15,9 @@ Windows Forms helper for previewing 16x16 tilemaps from simple, hex-coded map da
 ## Using the app
 1) Launch the app (`Rikako.exe` from `bin/<config>/<tfm>` or `dotnet run`).
 2) Click **Load Tilemap** (or File → Load Tilemap) and select your tile sheet.
-3) Load your map text via **Load Map** (or File → Load Map) or paste it directly into the editor.
+3) Load your map text via **Load Map** (or File → Load Map), load a previously encoded binary map (`.map`/`.bin`), or paste text directly into the editor.
 4) Click **Generate** to render a preview. Use **Previous/Next** to move through sections when the map is taller than five rows.
+5) Use **File → Save Encoded Map** to write the current `Row { ... }` data back to a compact binary map file. The saved bytes can be loaded again with **Load Map** and decoded back into rows.
 
 ### Map text format
 - Each row is declared as `Row { ... }`.
@@ -37,7 +38,12 @@ Row { 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x
 - `MapEditHelper/Mainform.Designer.cs` – UI layout and menus
 - `MapEditHelper/rikako.ico` – application icon
 
+## Binary map round-trip
+- **Load Map** accepts both text maps and encoded binary maps. Text maps are kept as-is, while binary maps are decoded into `Row { 0x.. }` lines using 24 tiles per row.
+- **Save Encoded Map** encodes every parsed tile code into one byte, preserving row order from top to bottom and left to right.
+- Binary round-tripping is intended for the same one-byte tile-code format used by the editor preview (`0xRC`, where `R` is the tile-sheet row and `C` is the tile-sheet column).
+
 ## Notes
 - The preview clears to white before drawing; only codes matching tiles on the sheet are rendered.
-- If a row lists more than 24 tile codes, the extra values are ignored in the preview.
+- If a row lists more than 24 tile codes, the extra values are ignored in the preview, but all parsed tile codes are still saved when encoding a binary map.
 - About dialog reports version 1.0; update it in `Mainform.cs` if you bump the app version.
