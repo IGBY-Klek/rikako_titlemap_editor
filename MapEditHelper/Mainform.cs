@@ -12,6 +12,8 @@ namespace MapEditHelper
         private MenuStrip? menuStrip1; // Make menuStrip1 nullable
         private List<string[]> parsedRows = new List<string[]>();
         private TilePreviewForm? tilePreviewForm;
+        private MapFileFormat currentMapFormat = MapFileFormat.Th04;
+        private byte[] currentMapHeader = Array.Empty<byte>();
 
         private const int TILES_PER_ROW = 24;
         private const int TILES_PER_SECTION = 5;
@@ -177,13 +179,239 @@ namespace MapEditHelper
         {
             using (OpenFileDialog ofd = new OpenFileDialog())
             {
-                ofd.Filter = "Text Files|*.txt";
+                ofd.Filter = "Map Files|*.txt;*.map;*.bin|Text Files|*.txt|Binary Map Files|*.map;*.bin|All Files|*.*";
                 if (ofd.ShowDialog() == DialogResult.OK)
                 {
-                    richTextBox1.Text = File.ReadAllText(ofd.FileName);
+                    LoadMapFile(ofd.FileName);
                     GenerateFromText(showWarnings: true);
                 }
             }
+        }
+
+        private void LoadMapFile(string fileName)
+        {
+            byte[] bytes = File.ReadAllBytes(fileName);
+            MapDecodeResult result = DecodeMapBytes(bytes);
+            currentMapFormat = result.Format;
+            currentMapHeader = result.Header;
+            richTextBox1.Text = result.Text;
+        }
+
+        private MapDecodeResult DecodeMapBytes(byte[] bytes)
+        {
+            if (bytes.Length == 0)
+            {
+                return new MapDecodeResult(string.Empty, MapFileFormat.Th04, Array.Empty<byte>());
+            }
+
+            if (TryDecodeTextMap(bytes, out string text))
+            {
+                return new MapDecodeResult(text, MapFileFormat.Text, Array.Empty<byte>());
+            }
+
+            if (TryExtractTh02MapData(bytes, out byte[] th02MapData))
+            {
+                return new MapDecodeResult(FormatRows(th02MapData.Select(b => b.ToString("X2"))), MapFileFormat.Th02, bytes.Take(4).ToArray());
+            }
+
+            if (TryExtractSizedMapData(bytes, headerSize: 8, out byte[] th05MapData))
+            {
+                return new MapDecodeResult(FormatRows(th05MapData.Select(b => b.ToString("X2"))), MapFileFormat.Th05, bytes.Take(8).ToArray());
+            }
+
+            if (TryExtractSizedMapData(bytes, headerSize: 2, out byte[] th04MapData))
+            {
+                return new MapDecodeResult(FormatRows(th04MapData.Select(b => b.ToString("X2"))), MapFileFormat.Th04, bytes.Take(2).ToArray());
+            }
+
+            return new MapDecodeResult(FormatRows(bytes.Select(b => b.ToString("X2"))), MapFileFormat.Raw, Array.Empty<byte>());
+        }
+
+        private bool TryExtractTh02MapData(byte[] bytes, out byte[] mapData)
+        {
+            mapData = Array.Empty<byte>();
+            if (bytes.Length < 6)
+            {
+                return false;
+            }
+
+            int payloadSize = ReadUInt16LittleEndian(bytes, 0);
+            if (payloadSize != bytes.Length - 4 || payloadSize < 2)
+            {
+                return false;
+            }
+
+            int mapSize = ReadUInt16LittleEndian(bytes, 4);
+            if (mapSize > payloadSize - 2)
+            {
+                return false;
+            }
+
+            mapData = bytes.Skip(6).Take(mapSize).ToArray();
+            return true;
+        }
+
+        private bool TryExtractSizedMapData(byte[] bytes, int headerSize, out byte[] mapData)
+        {
+            mapData = Array.Empty<byte>();
+            if (bytes.Length < headerSize || headerSize < 2)
+            {
+                return false;
+            }
+
+            int mapSize = ReadUInt16LittleEndian(bytes, 0);
+            if (mapSize != bytes.Length - headerSize)
+            {
+                return false;
+            }
+
+            mapData = bytes.Skip(headerSize).Take(mapSize).ToArray();
+            return true;
+        }
+
+        private int ReadUInt16LittleEndian(byte[] bytes, int offset)
+        {
+            return bytes[offset] | (bytes[offset + 1] << 8);
+        }
+
+        private bool TryDecodeTextMap(byte[] bytes, out string text)
+        {
+            text = string.Empty;
+
+            if (!LooksLikeText(bytes))
+            {
+                return false;
+            }
+
+            string decodedText = System.Text.Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+            if (Regex.IsMatch(decodedText, @"\brow\s*\{", RegexOptions.IgnoreCase))
+            {
+                text = decodedText;
+                return true;
+            }
+
+            string[] prefixedHexValues = Regex.Matches(decodedText, @"(?<![0-9A-Fa-f])(?:0x|0X|\$)([0-9A-Fa-f]{1,2})(?![0-9A-Fa-f])")
+                .Cast<Match>()
+                .Select(m => m.Groups[1].Value.ToUpper().PadLeft(2, '0'))
+                .ToArray();
+            if (prefixedHexValues.Length > 0)
+            {
+                text = FormatRows(prefixedHexValues);
+                return true;
+            }
+
+            string[] plainHexValues = Regex.Matches(decodedText, @"(?<![0-9A-Fa-f])([0-9A-Fa-f]{2})(?![0-9A-Fa-f])")
+                .Cast<Match>()
+                .Select(m => m.Groups[1].Value.ToUpper())
+                .ToArray();
+
+            if (plainHexValues.Length == 0)
+            {
+                return false;
+            }
+
+            string textWithoutHexValues = Regex.Replace(decodedText, @"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}(?![0-9A-Fa-f])", string.Empty);
+            bool hasOnlyHexSeparators = textWithoutHexValues.All(c => char.IsWhiteSpace(c) || c == ',' || c == ';' || c == '{' || c == '}');
+            if (!hasOnlyHexSeparators)
+            {
+                return false;
+            }
+
+            text = FormatRows(plainHexValues);
+            return true;
+        }
+
+        private bool LooksLikeText(byte[] bytes)
+        {
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            {
+                return true;
+            }
+
+            return bytes.All(b => b >= 0x20 || b == (byte)'\r' || b == (byte)'\n' || b == (byte)'\t');
+        }
+
+        private string FormatRows(IEnumerable<string> hexValues)
+        {
+            List<string> values = hexValues.ToList();
+            List<string> rows = new List<string>();
+
+            for (int i = 0; i < values.Count; i += TILES_PER_ROW)
+            {
+                rows.Add($"Row {{ {string.Join(", ", values.Skip(i).Take(TILES_PER_ROW).Select(v => $"0x{v}"))} }}");
+            }
+
+            return string.Join(Environment.NewLine, rows);
+        }
+
+        private void SaveEncodedMap_Click(object? sender, EventArgs e)
+        {
+            byte[] mapBytes = EncodeMapText(richTextBox1.Text);
+            if (mapBytes.Length == 0)
+            {
+                MessageBox.Show("No tile codes found to save. Expected values like '0x00' in 'Row { ... }' lines.", "No map data", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Filter = "Binary Map Files|*.map;*.bin|All Files|*.*";
+                sfd.DefaultExt = "map";
+                sfd.FileName = "map.map";
+
+                if (sfd.ShowDialog() == DialogResult.OK)
+                {
+                    File.WriteAllBytes(sfd.FileName, EncodeMapFile(mapBytes));
+                }
+            }
+        }
+
+        private byte[] EncodeMapText(string input)
+        {
+            return ParseInput(input)
+                .SelectMany(row => row)
+                .Select(hex => Convert.ToByte(hex, 16))
+                .ToArray();
+        }
+
+        private byte[] EncodeMapFile(byte[] mapBytes)
+        {
+            return currentMapFormat switch
+            {
+                MapFileFormat.Th02 => EncodeTh02MapFile(mapBytes),
+                MapFileFormat.Raw => mapBytes,
+                _ => EncodeSizedMapFile(mapBytes, currentMapFormat == MapFileFormat.Th05 ? 8 : 2)
+            };
+        }
+
+        private byte[] EncodeTh02MapFile(byte[] mapBytes)
+        {
+            byte[] result = new byte[mapBytes.Length + 6];
+            byte[] header = currentMapHeader.Length == 4 ? currentMapHeader : new byte[4];
+            Array.Copy(header, result, 4);
+            WriteUInt16LittleEndian(result, 0, mapBytes.Length + 2);
+            WriteUInt16LittleEndian(result, 4, mapBytes.Length);
+            Array.Copy(mapBytes, 0, result, 6, mapBytes.Length);
+            return result;
+        }
+
+        private byte[] EncodeSizedMapFile(byte[] mapBytes, int headerSize)
+        {
+            byte[] result = new byte[mapBytes.Length + headerSize];
+            if (currentMapHeader.Length == headerSize)
+            {
+                Array.Copy(currentMapHeader, result, headerSize);
+            }
+
+            WriteUInt16LittleEndian(result, 0, mapBytes.Length);
+            Array.Copy(mapBytes, 0, result, headerSize, mapBytes.Length);
+            return result;
+        }
+
+        private void WriteUInt16LittleEndian(byte[] bytes, int offset, int value)
+        {
+            bytes[offset] = (byte)(value & 0xFF);
+            bytes[offset + 1] = (byte)((value >> 8) & 0xFF);
         }
 
         private void pictureBox2_Click(object sender, EventArgs e)
@@ -200,6 +428,11 @@ namespace MapEditHelper
         private void LoadMap_Click(object? sender, EventArgs e)
         {
             Button3_Click(sender, e); // Reuse existing functionality
+        }
+
+        private void SaveMap_Click(object? sender, EventArgs e)
+        {
+            SaveEncodedMap_Click(sender, e);
         }
 
         private void Exit_Click(object? sender, EventArgs e)
@@ -285,6 +518,17 @@ namespace MapEditHelper
             {
                 // Ignore icon failures to avoid crashing the UI
             }
+        }
+
+        private readonly record struct MapDecodeResult(string Text, MapFileFormat Format, byte[] Header);
+
+        private enum MapFileFormat
+        {
+            Text,
+            Raw,
+            Th02,
+            Th04,
+            Th05
         }
     }
 }

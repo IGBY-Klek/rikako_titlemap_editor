@@ -137,6 +137,7 @@ namespace MapEditHelper
             fileMenu.DropDownItems.AddRange(new ToolStripItem[] {
                 new ToolStripMenuItem("&Load Tilemap", null, new EventHandler(LoadTilemap_Click)),
                 new ToolStripMenuItem("Load &Map", null, new EventHandler(LoadMap_Click)),
+                new ToolStripMenuItem("&Save Encoded Map", null, new EventHandler(SaveMap_Click)),
                 new ToolStripSeparator(),
                 new ToolStripMenuItem("E&xit", null, new EventHandler(Exit_Click))
             });
