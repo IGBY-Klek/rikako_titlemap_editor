@@ -40,7 +40,8 @@ Row { 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x
 
 ## Binary map round-trip
 - **Load Map** accepts `Row { ... }` text maps, plain hex dumps/C-style byte arrays (`40 0B ...`, `0x40, 0x0B, ...`, or `$40 $0B ...`), and binary maps. Text row maps are kept as-is, while hex dumps and binary maps are decoded into `Row { 0x.. }` lines using 24 tiles per row.
-- **Save Encoded Map** encodes every parsed tile code into one byte, preserving row order from top to bottom and left to right.
+- Binary `.MAP` files are decoded with the game file headers: TH02 has a 4-byte file header plus an in-payload 2-byte map length, TH04 has a 2-byte map-size header, and TH05 has an 8-byte header whose first word is the map size. Unknown raw binaries still fall back to one byte per tile.
+- **Save Encoded Map** encodes every parsed tile code into one byte, preserves any recognized game-specific header bytes where possible, and updates the map-size words before writing the file.
 - Binary round-tripping is intended for the same one-byte tile-code format used by the editor preview (`0xRC`, where `R` is the tile-sheet row and `C` is the tile-sheet column).
 
 ## Notes
